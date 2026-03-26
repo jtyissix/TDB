@@ -208,6 +208,12 @@ RC FileBufferPool::flush_page_internal(Frame &frame) {
   //  3. 写入数据到文件的目标位置
   //  4. 清除frame的脏标记
   //  5. 记录和返回成功
+  Page thisPage=frame.page();
+  int thisfd=frame.file_desc();
+  int offset=BP_PAGE_SIZE*thisPage.page_num;
+  lseek(thisfd,offset,SEEK_SET);
+  writen(thisfd,&thisPage,BP_PAGE_SIZE);
+  frame.clear_dirty();
   return RC::SUCCESS;
 }
 
@@ -234,12 +240,50 @@ RC FileBufferPool::flush_all_pages() {
  * TODO [Lab1] 需要同学们实现某个指定页面的驱逐
  */
 RC FileBufferPool::evict_page(PageNum page_num, Frame *buf) {
+  std::lock_guard<common::Mutex> guard(lock_);
+  return evict_page_internal(page_num,buf);
+}
+RC FileBufferPool::evict_page_internal(PageNum page_num, Frame *used_frame){
+  Frame *frame = frame_manager_.get(file_desc_, page_num);
+  if (frame == nullptr) {
+    return RC::SUCCESS;
+  }
+
+  if (used_frame != nullptr && frame == used_frame) {
+    return RC::LOCKED_CONCURRENCY_CONFLICT;
+  }
+
+  if (frame->pin_count() > 0) {
+    return RC::LOCKED_CONCURRENCY_CONFLICT;
+  }
+
+  if (frame->dirty()) {
+    RC rc = flush_page_internal(*frame);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+  }
+
+  
+  RC rc = frame_manager_.free(file_desc_, page_num, frame);
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
+
   return RC::SUCCESS;
 }
 /**
  * TODO [Lab1] 需要同学们实现该文件所有页面的驱逐
  */
 RC FileBufferPool::evict_all_pages() {
+  BufferPoolIterator its;
+  its.init(*this);
+  while (its.has_next()) {
+        PageNum thisPageNum=its.next();
+        Frame** thisFrame=nullptr;
+        get_this_page(thisPageNum,thisFrame);
+        evict_page(thisPageNum,*thisFrame);
+    }
   return RC::SUCCESS;
 }
 
@@ -488,7 +532,13 @@ RC BufferPoolManager::close_file(const char *_file_name) {
  * TODO [Lab1] 需要同学们实现页面刷盘
  */
 RC BufferPoolManager::flush_page(Frame &frame) {
-  return RC::SUCCESS;
+  std::scoped_lock lock_guard(lock_);
+  auto thisFileBuffer=fd_buffer_pools_.find(frame.file_desc());
+  if(thisFileBuffer==fd_buffer_pools_.end()){
+    return RC::NOTFOUND;
+  }
+  RC res=thisFileBuffer->second->flush_page(frame);
+  return res;
 }
 
 static BufferPoolManager *default_bpm = nullptr;

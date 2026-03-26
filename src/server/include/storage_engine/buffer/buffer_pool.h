@@ -54,6 +54,7 @@ class FileBufferPool {
    * 驱逐frame
    */
   RC evict_page(PageNum page_num, Frame *buf);
+  RC evict_page_internal(PageNum page_num, Frame *buf);
   RC evict_all_pages();
 
   int file_desc() const;

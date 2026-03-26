@@ -47,6 +47,38 @@ Frame *FrameManager::get(int file_desc, PageNum page_num) {
  * TODO [Lab1] 需要同学们实现页帧驱逐
  */
 int FrameManager::evict_frames(int count, std::function<RC(Frame *frame)> evict_action) {
+  std::lock_guard<std::mutex> lock_guard(lock_);
+  std::vector<std::pair<FrameId, Frame *>> victims;
+  victims.reserve(count);
+
+  frames_.foreach_reverse([&](const FrameId &fid, Frame *const frame) -> bool {
+    if (!frame->can_evict()) {
+      return true;
+    }
+    victims.emplace_back(fid, frame);
+    return static_cast<int>(victims.size()) < count;
+  });
+  int evicted = 0;
+  for (auto &it : victims) {
+    FrameId fid = it.first;
+    Frame *frame = it.second;
+
+    frame->pin();
+    RC rc = evict_action(frame);
+    if (rc != RC::SUCCESS) {
+      frame->unpin();
+      continue;
+    }
+
+    RC frc = free_internal(fid, frame);
+    if (frc == RC::SUCCESS) {
+      evicted++;
+    }
+
+    if (evicted >= count) {
+      break;
+    }
+  }
   return 0;
 }
 
