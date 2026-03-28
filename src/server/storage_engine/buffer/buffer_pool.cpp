@@ -250,16 +250,19 @@ RC FileBufferPool::evict_page_internal(PageNum page_num, Frame *used_frame){
   }
 
   if (used_frame != nullptr && frame == used_frame) {
+  frame->unpin();
     return RC::LOCKED_CONCURRENCY_CONFLICT;
   }
 
-  if (frame->pin_count() > 0) {
+  if (frame->pin_count() > 1) {
+  frame->unpin();
     return RC::LOCKED_CONCURRENCY_CONFLICT;
   }
 
   if (frame->dirty()) {
     RC rc = flush_page_internal(*frame);
     if (rc != RC::SUCCESS) {
+    frame->unpin();
       return rc;
     }
   }
@@ -280,10 +283,18 @@ RC FileBufferPool::evict_all_pages() {
   its.init(*this);
   while (its.has_next()) {
         PageNum thisPageNum=its.next();
-        Frame** thisFrame=nullptr;
-        get_this_page(thisPageNum,thisFrame);
-        evict_page(thisPageNum,*thisFrame);
+        Frame* thisFrame=nullptr;
+        get_this_page(thisPageNum,&thisFrame);
+        if (thisFrame != nullptr) {
+        thisFrame->unpin();
+        evict_page_internal(thisPageNum,nullptr);}
     }
+    Frame* thisFrame = nullptr;
+  get_this_page(BP_HEADER_PAGE, &thisFrame);
+  if (thisFrame != nullptr) {
+    thisFrame->unpin();
+    evict_page_internal(BP_HEADER_PAGE, nullptr);
+  }
   return RC::SUCCESS;
 }
 
